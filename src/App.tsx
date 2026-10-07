@@ -23,10 +23,24 @@ import { Task2Dissection } from './components/Task2Dissection';
 import { Task3Construct } from './components/Task3Construct';
 import { ReportModal } from './components/ReportModal';
 import { WordExportModal } from './components/WordExportModal';
+import { AdminDashboard } from './components/AdminDashboard';
 import { exportTaskToWord, WordExportTarget } from './utils/wordExport';
+import { syncGroupReportToServer } from './utils/reportSync';
 
 const STORAGE_PREFIX = 'campus_info_appraiser_v1_group_';
 const ACTIVE_GROUP_KEY = 'campus_info_appraiser_v1_active_group';
+
+function checkIsAdminRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const pathname = window.location.pathname.replace(/\/+$/, '');
+  const hash = window.location.hash;
+  return (
+    pathname === '/admin' ||
+    pathname.endsWith('/admin') ||
+    hash === '#/admin' ||
+    hash === '#admin'
+  );
+}
 
 function createDefaultRecord(groupId: string): GroupLabRecord {
   return {
@@ -84,6 +98,10 @@ function loadGroupRecord(groupId: string): GroupLabRecord {
 }
 
 export default function App() {
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() =>
+    checkIsAdminRoute()
+  );
+
   const [groupId, setGroupId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(ACTIVE_GROUP_KEY) || '1';
@@ -101,16 +119,29 @@ export default function App() {
     useState<WordExportTarget | null>(null);
   const [savePulse, setSavePulse] = useState(false);
 
+  // Listen to browser popstate / hashchange for /admin navigation
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setIsAdminRoute(checkIsAdminRoute());
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
+  }, []);
+
   const handleQuickExportTaskWord = (target: WordExportTarget) => {
-    // Immediately download the blank student printable Word worksheet for the chosen task
-    // and open the Word Export Modal so the teacher can also choose Teacher Answer Key or Filled mode
     exportTaskToWord(target, record, 'blank');
     setWordModalTarget(target);
   };
 
   // When groupId changes, load that group's record from localStorage
   const handleGroupChange = (newGroupId: string) => {
-    const sanitized = newGroupId.replace(/[^\w\u4e00-\u9fa5-]/g, '').slice(0, 8);
+    const sanitized = newGroupId
+      .replace(/[^\w\u4e00-\u9fa5-]/g, '')
+      .slice(0, 8);
     setGroupId(sanitized);
     try {
       window.localStorage.setItem(ACTIVE_GROUP_KEY, sanitized || '1');
@@ -121,8 +152,9 @@ export default function App() {
     setRecord(loaded);
   };
 
-  // Persist record to localStorage automatically whenever it changes
+  // Persist record to localStorage and sync to backend server automatically
   useEffect(() => {
+    if (isAdminRoute) return;
     const keyId = groupId.trim() || '1';
     try {
       window.localStorage.setItem(
@@ -131,11 +163,52 @@ export default function App() {
       );
       setSavePulse(true);
       const timer = window.setTimeout(() => setSavePulse(false), 600);
-      return () => window.clearTimeout(timer);
+
+      // Sync to backend if the group has filled in any answer or exported report
+      const hasAnyProgress =
+        record.isExportedReport ||
+        record.task1.equalValueChoice !== '' ||
+        record.task1.dependsOnInput.trim() !== '' ||
+        record.task2.isDissected ||
+        record.task2.verdictChoice !== '' ||
+        Object.keys(record.task3.caseMatches).length > 0 ||
+        record.task3.groupSlogan.trim() !== '';
+
+      const syncTimer = window.setTimeout(() => {
+        if (hasAnyProgress) {
+          syncGroupReportToServer(
+            { ...record, groupId: keyId },
+            Boolean(record.isExportedReport)
+          );
+        }
+      }, 400);
+
+      return () => {
+        window.clearTimeout(timer);
+        window.clearTimeout(syncTimer);
+      };
     } catch {
       // Ignore storage write errors
     }
-  }, [record, groupId]);
+  }, [record, groupId, isAdminRoute]);
+
+  const handleOpenAndSubmitReport = async () => {
+    const nowStr = new Date().toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const updatedRecord: GroupLabRecord = {
+      ...record,
+      groupId: groupId.trim() || '1',
+      lastUpdated: nowStr,
+      submittedAt: nowStr,
+      isExportedReport: true,
+    };
+    setRecord(updatedRecord);
+    setShowReportModal(true);
+    await syncGroupReportToServer(updatedRecord, true);
+  };
 
   const updateTask1 = useCallback((updater: (prev: Task1Data) => Task1Data) => {
     setRecord((prev) => ({
@@ -178,6 +251,18 @@ export default function App() {
     setRecord(fresh);
   };
 
+  // If visiting /admin, render the Admin Login / Dashboard view
+  if (isAdminRoute) {
+    return (
+      <AdminDashboard
+        onExitAdmin={() => {
+          window.history.pushState({}, '', '/');
+          setIsAdminRoute(false);
+        }}
+      />
+    );
+  }
+
   // Completion statuses for the 3 tasks
   const isTask1Done =
     record.task1.equalValueChoice !== '' &&
@@ -205,7 +290,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-900 pb-20">
-      {/* 固定顶部导航栏（深海科技蓝实验室风格） */}
+      {/* 固定顶部导航栏（深海科技蓝实验室风格，不包含任何后台入口按钮） */}
       <header className="sticky top-0 z-40 bg-slate-950 text-white border-b border-cyan-900/60 shadow-md no-print">
         <div className="max-w-[1380px] mx-auto px-4 lg:px-6 h-20 flex items-center justify-between gap-4">
           {/* 左侧：应用标题 + 副标题 */}
@@ -242,7 +327,9 @@ export default function App() {
               {isTask1Done && (
                 <CheckCircle2
                   className={`w-4 h-4 ${
-                    activeTask === 'task1' ? 'text-slate-950' : 'text-emerald-400'
+                    activeTask === 'task1'
+                      ? 'text-slate-950'
+                      : 'text-emerald-400'
                   }`}
                 />
               )}
@@ -262,7 +349,9 @@ export default function App() {
               {isTask2Done && (
                 <CheckCircle2
                   className={`w-4 h-4 ${
-                    activeTask === 'task2' ? 'text-slate-950' : 'text-emerald-400'
+                    activeTask === 'task2'
+                      ? 'text-slate-950'
+                      : 'text-emerald-400'
                   }`}
                 />
               )}
@@ -282,7 +371,9 @@ export default function App() {
               {isTask3Done && (
                 <CheckCircle2
                   className={`w-4 h-4 ${
-                    activeTask === 'task3' ? 'text-slate-950' : 'text-emerald-400'
+                    activeTask === 'task3'
+                      ? 'text-slate-950'
+                      : 'text-emerald-400'
                   }`}
                 />
               )}
@@ -348,7 +439,7 @@ export default function App() {
           <Task3Construct
             data={record.task3}
             onChange={updateTask3}
-            onOpenReport={() => setShowReportModal(true)}
+            onOpenReport={handleOpenAndSubmitReport}
             onExportWord={() => handleQuickExportTaskWord('task3')}
           />
         )}
@@ -366,7 +457,8 @@ export default function App() {
                 }`}
               />
               <span>
-                第 <strong className="text-slate-900">{groupId || '1'}</strong> 小组数据已自动保存（{record.lastUpdated}）
+                第 <strong className="text-slate-900">{groupId || '1'}</strong>{' '}
+                小组数据已自动保存（{record.lastUpdated}）
               </span>
             </div>
 
@@ -406,7 +498,7 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setShowReportModal(true)}
+              onClick={handleOpenAndSubmitReport}
               className="px-5 py-2.5 rounded-xl bg-cyan-700 hover:bg-cyan-800 active:scale-98 text-white text-sm md:text-base font-bold shadow-sm transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap"
             >
               <FileSpreadsheet className="w-4 h-4" />

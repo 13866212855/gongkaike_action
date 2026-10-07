@@ -37,6 +37,8 @@ export interface GroupLabRecord {
   task2: Task2Data;
   task3: Task3Data;
   lastUpdated: string;
+  submittedAt?: string;
+  isExportedReport?: boolean;
 }
 
 export interface TimeNodeInfo {
