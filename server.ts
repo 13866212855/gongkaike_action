@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
@@ -10,6 +11,7 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.join(__dirname, 'data');
 const REPORTS_FILE = path.join(DATA_DIR, 'group-reports.json');
+const CLASSROOM_FILE = path.join(DATA_DIR, 'classroom-config.json');
 
 const APIHUB_BASE_URL =
   process.env.APIHUB_BASE_URL || 'https://apihub.agnes-ai.com/v1';
@@ -17,12 +19,48 @@ const APIHUB_API_KEY =
   process.env.APIHUB_API_KEY ||
   'sk-GUdpKQNIwwJSZQ5mYyrMnuCJBOwSbB73c2N6NcnNfk5LoKyq';
 
+const DEFAULT_CLASSROOM_CONFIG = {
+  groupCount: 5,
+  unlockAnswerTask1: false,
+  unlockAnswerTask2: false,
+  unlockAnswerTask3: false,
+  teacherBroadcast: '',
+};
+
+function getLanIPv4Addresses(): string[] {
+  const ips: string[] = [];
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          ips.push(iface.address);
+        }
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  return ips;
+}
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
   if (!fs.existsSync(REPORTS_FILE)) {
-    fs.writeFileSync(REPORTS_FILE, JSON.stringify({ reports: {} }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      REPORTS_FILE,
+      JSON.stringify({ reports: {} }, null, 2),
+      'utf-8'
+    );
+  }
+  if (!fs.existsSync(CLASSROOM_FILE)) {
+    fs.writeFileSync(
+      CLASSROOM_FILE,
+      JSON.stringify(DEFAULT_CLASSROOM_CONFIG, null, 2),
+      'utf-8'
+    );
   }
 }
 
@@ -31,7 +69,9 @@ function readReportsMap(): Record<string, any> {
     ensureDataDir();
     const raw = fs.readFileSync(REPORTS_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
-    return parsed.reports && typeof parsed.reports === 'object' ? parsed.reports : {};
+    return parsed.reports && typeof parsed.reports === 'object'
+      ? parsed.reports
+      : {};
   } catch {
     return {};
   }
@@ -40,9 +80,34 @@ function readReportsMap(): Record<string, any> {
 function writeReportsMap(reports: Record<string, any>) {
   try {
     ensureDataDir();
-    fs.writeFileSync(REPORTS_FILE, JSON.stringify({ reports }, null, 2), 'utf-8');
+    fs.writeFileSync(
+      REPORTS_FILE,
+      JSON.stringify({ reports }, null, 2),
+      'utf-8'
+    );
   } catch (err) {
     console.error('Failed to write reports file:', err);
+  }
+}
+
+function readClassroomConfig() {
+  try {
+    ensureDataDir();
+    const raw = fs.readFileSync(CLASSROOM_FILE, 'utf-8');
+    return { ...DEFAULT_CLASSROOM_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_CLASSROOM_CONFIG };
+  }
+}
+
+function writeClassroomConfig(cfg: any) {
+  try {
+    ensureDataDir();
+    const next = { ...readClassroomConfig(), ...cfg };
+    fs.writeFileSync(CLASSROOM_FILE, JSON.stringify(next, null, 2), 'utf-8');
+    return next;
+  } catch {
+    return DEFAULT_CLASSROOM_CONFIG;
   }
 }
 
@@ -61,13 +126,38 @@ async function startServer() {
     });
   });
 
+  // Get classroom live config (teacher answer unlock state, broadcast notice, LAN IPs)
+  app.get('/api/classroom-state', (_req, res) => {
+    const cfg = readClassroomConfig();
+    const ips = getLanIPv4Addresses();
+    res.json({
+      ...cfg,
+      lanUrls: ips.map((ip) => `http://${ip}:7874`),
+    });
+  });
+
+  // Update classroom live config from /admin
+  app.post('/api/classroom-state', (req, res) => {
+    const updated = writeClassroomConfig(req.body || {});
+    const ips = getLanIPv4Addresses();
+    res.json({
+      ok: true,
+      config: {
+        ...updated,
+        lanUrls: ips.map((ip) => `http://${ip}:7874`),
+      },
+    });
+  });
+
   // Admin authentication endpoint
   app.post('/api/admin/login', (req, res) => {
     const { username, password } = req.body || {};
     if (username === 'admin' && password === 'admin123') {
       res.json({ ok: true, token: 'gongkaike_admin_session_ok' });
     } else {
-      res.status(401).json({ ok: false, message: '账号或密码错误，请重新输入' });
+      res
+        .status(401)
+        .json({ ok: false, message: '账号或密码错误，请重新输入' });
     }
   });
 
@@ -75,9 +165,14 @@ async function startServer() {
   app.get('/api/reports', (_req, res) => {
     const reportsMap = readReportsMap();
     const list = Object.values(reportsMap).sort((a: any, b: any) =>
-      String(a.groupId).localeCompare(String(b.groupId), 'zh-CN', { numeric: true })
+      String(a.groupId).localeCompare(String(b.groupId), 'zh-CN', {
+        numeric: true,
+      })
     );
-    res.json({ reports: list });
+    res.json({
+      reports: list,
+      classroomConfig: readClassroomConfig(),
+    });
   });
 
   // Submit / update a group's inquiry report
@@ -89,23 +184,63 @@ async function startServer() {
     }
     const cleanId = String(record.groupId).trim() || '1';
     const reportsMap = readReportsMap();
+    const existing = reportsMap[cleanId] || {};
     const nowStr = new Date().toLocaleTimeString('zh-CN', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     });
+
+    // Aggregate individual student names per group automatically
+    const mergedMembersMap: Record<string, string> = {
+      ...(existing.membersMap || {}),
+      ...(record.membersMap || {}),
+    };
+    const individualName = String(
+      record.studentName ?? record.memberNames ?? ''
+    ).trim();
+    const clientKey = String(record.clientId || 'default_pc').trim();
+    if (individualName) {
+      mergedMembersMap[clientKey] = individualName;
+    } else if (record.studentName === '') {
+      delete mergedMembersMap[clientKey];
+    }
+
+    const uniqueNames = Array.from(
+      new Set(
+        Object.values(mergedMembersMap)
+          .map((n) => String(n).trim())
+          .filter(Boolean)
+      )
+    );
+    const combinedMemberNames =
+      uniqueNames.length > 0
+        ? uniqueNames.join('、')
+        : existing.memberNames || '';
+
     reportsMap[cleanId] = {
+      ...existing,
       ...record,
       groupId: cleanId,
+      membersMap: mergedMembersMap,
+      memberNames: combinedMemberNames,
       lastUpdated: record.lastUpdated || nowStr,
-      submittedAt: record.submittedAt || nowStr,
-      isExportedReport: Boolean(record.isExportedReport ?? true),
+      submittedAt: record.isExportedReport
+        ? record.submittedAt || nowStr
+        : existing.submittedAt,
+      isExportedReport: Boolean(
+        record.isExportedReport || existing.isExportedReport
+      ),
     };
     writeReportsMap(reportsMap);
-    res.json({ ok: true, report: reportsMap[cleanId] });
+    res.json({
+      ok: true,
+      report: reportsMap[cleanId],
+      classroomConfig: readClassroomConfig(),
+    });
   });
 
-  // Batch sync multiple records (e.g. from local browser storage)
+  // Batch sync multiple records
   app.post('/api/reports/batch', (req, res) => {
     const { records } = req.body || {};
     if (!Array.isArray(records)) {
@@ -125,7 +260,9 @@ async function startServer() {
     }
     writeReportsMap(reportsMap);
     const list = Object.values(reportsMap).sort((a: any, b: any) =>
-      String(a.groupId).localeCompare(String(b.groupId), 'zh-CN', { numeric: true })
+      String(a.groupId).localeCompare(String(b.groupId), 'zh-CN', {
+        numeric: true,
+      })
     );
     res.json({ ok: true, reports: list });
   });

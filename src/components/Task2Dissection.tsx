@@ -7,13 +7,10 @@ import {
   Scale,
   Network,
   CheckCircle2,
-  Eye,
-  EyeOff,
   Sparkles,
   ArrowRight,
-  Edit3,
   RotateCw,
-  FileText,
+  Lock,
 } from 'lucide-react';
 import { Task2Data, WordToken } from '../types/lab';
 import {
@@ -26,21 +23,19 @@ interface Task2DissectionProps {
   data: Task2Data;
   onChange: (updater: (prev: Task2Data) => Task2Data) => void;
   onNextTask: () => void;
-  onExportWord: () => void;
+  answerUnlocked?: boolean;
 }
 
 export const Task2Dissection: React.FC<Task2DissectionProps> = ({
   data,
   onChange,
   onNextTask,
-  onExportWord,
+  answerUnlocked = false,
 }) => {
   // Animation step: 0 = not started, 1 = scanning Module A, 2 = scanning Module B, 3 = all 3 modules revealed
   const [scanStage, setScanStage] = useState<number>(data.isDissected ? 3 : 0);
   const [isScanning, setIsScanning] = useState(false);
   const [activeToken, setActiveToken] = useState<WordToken | null>(null);
-  const [showCustomEditor, setShowCustomEditor] = useState(false);
-  const [showAnswerKey, setShowAnswerKey] = useState(false);
 
   const currentPreset =
     data.activePresetId === 'zhongkao'
@@ -118,116 +113,38 @@ export const Task2Dissection: React.FC<Task2DissectionProps> = ({
             </div>
           </div>
 
-          {/* 案例切换器（支持气象局快讯、中考政策快讯及课堂自定义输入） */}
+          {/* 案例切换器（支持气象局快讯与中考政策快讯对比） */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg border border-slate-200">
               <button
                 type="button"
                 onClick={() => {
-                  setShowCustomEditor(false);
                   onChange((prev) => ({ ...prev, activePresetId: 'weather' }));
                 }}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  data.activePresetId === 'weather'
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                  data.activePresetId !== 'zhongkao'
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                气象局快讯对比（默认）
+                样本一：气象局寒潮快讯对比
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setShowCustomEditor(false);
                   onChange((prev) => ({ ...prev, activePresetId: 'zhongkao' }));
                 }}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                   data.activePresetId === 'zhongkao'
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                中考改革快讯对比
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCustomEditor((v) => !v);
-                  onChange((prev) => ({
-                    ...prev,
-                    activePresetId: 'custom',
-                    customTextA: prev.customTextA || currentPreset.infoA.content,
-                    customTextB: prev.customTextB || currentPreset.infoB.content,
-                  }));
-                }}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap ${
-                  data.activePresetId === 'custom'
-                    ? 'bg-white text-cyan-800 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>自定义快讯文本</span>
+                样本二：中考改革政策对比
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={onExportWord}
-              className="px-3.5 py-2 rounded-lg border border-cyan-600 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 text-xs md:text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              title="将任务二单独导出为可打印的 Word 纸质实验单"
-            >
-              <FileText className="w-4 h-4 text-cyan-700" />
-              <span>导出【任务二】Word</span>
-            </button>
           </div>
         </div>
-
-        {/* 可选：教师自定义文本输入框 */}
-        {showCustomEditor && (
-          <div className="mb-5 p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-slate-800">
-                ✏️ 课堂自定义文本编辑（修改后下方卡片及分词热力图将实时同步更新）：
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowCustomEditor(false)}
-                className="text-xs font-semibold text-cyan-700 hover:underline cursor-pointer"
-              >
-                收起编辑器
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-sky-800 mb-1">
-                  信息A·权威来源快讯原文：
-                </label>
-                <textarea
-                  rows={3}
-                  value={data.customTextA}
-                  onChange={(e) =>
-                    onChange((prev) => ({ ...prev, customTextA: e.target.value }))
-                  }
-                  className="w-full p-2.5 text-sm rounded-lg border border-sky-300 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-rose-800 mb-1">
-                  信息B·网络热传夸张快讯原文：
-                </label>
-                <textarea
-                  rows={3}
-                  value={data.customTextB}
-                  onChange={(e) =>
-                    onChange((prev) => ({ ...prev, customTextB: e.target.value }))
-                  }
-                  className="w-full p-2.5 text-sm rounded-lg border border-rose-300 bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                />
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* 左右分栏展示两则快讯原文 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -917,25 +834,19 @@ export const Task2Dissection: React.FC<Task2DissectionProps> = ({
           </div>
         </div>
 
-        {/* 底部操作栏：查看参考答案 + 前往任务三 */}
+        {/* 底部操作栏：教师解锁参考答案状态 + 前往任务三 */}
         <div className="mt-6 pt-5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setShowAnswerKey((s) => !s)}
-            className="px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            {showAnswerKey ? (
-              <>
-                <EyeOff className="w-4 h-4 text-slate-500" />
-                <span>隐藏参考答案</span>
-              </>
-            ) : (
-              <>
-                <Eye className="w-4 h-4 text-cyan-700" />
-                <span>查看参考答案（教师点评用）</span>
-              </>
-            )}
-          </button>
+          {answerUnlocked ? (
+            <span className="text-sm font-bold text-cyan-800 flex items-center gap-1.5 bg-cyan-50 px-3.5 py-2 rounded-lg border border-cyan-200">
+              <Sparkles className="w-4 h-4 text-cyan-600" />
+              <span>教师机已公布本任务参考结论（请对照下方解析自查）</span>
+            </span>
+          ) : (
+            <span className="text-xs font-mono text-slate-500 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <span>课堂探究进行中 · 教师讲评时将向全班同步解锁参考结论</span>
+            </span>
+          )}
 
           <button
             type="button"
@@ -947,11 +858,11 @@ export const Task2Dissection: React.FC<Task2DissectionProps> = ({
           </button>
         </div>
 
-        {showAnswerKey && (
+        {answerUnlocked && (
           <div className="mt-4 p-4 rounded-xl bg-cyan-950 text-white border border-cyan-800">
             <div className="flex items-center gap-2 text-cyan-300 text-xs font-mono mb-1.5">
               <Sparkles className="w-4 h-4" />
-              <span>课堂点评参考答案（任务二·真伪解剖）</span>
+              <span>课堂点评标准参考结论（任务二·真伪解剖）</span>
             </div>
             <p className="text-base leading-relaxed">
               1. 信息B属于 <strong className="text-cyan-300">伪信息（夸大/捏造谣言）</strong>。

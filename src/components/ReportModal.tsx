@@ -22,13 +22,18 @@ import { exportTaskToWord } from '../utils/wordExport';
 
 interface ReportModalProps {
   record: GroupLabRecord;
+  isAdminView?: boolean;
   onClose: () => void;
 }
 
-export const ReportModal: React.FC<ReportModalProps> = ({ record, onClose }) => {
+export const ReportModal: React.FC<ReportModalProps> = ({
+  record,
+  isAdminView = false,
+  onClose,
+}) => {
   const [copied, setCopied] = useState(false);
 
-  const { groupId, task1, task2, task3, lastUpdated } = record;
+  const { groupId, memberNames, task1, task2, task3, lastUpdated } = record;
 
   const correctCasesCount = CAMPUS_CASES.filter(
     (c) => task3.caseMatches[c.id] === c.correctFeature
@@ -125,7 +130,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({ record, onClose }) => 
           <div className="flex items-center gap-2.5">
             <Award className="w-5 h-5 text-cyan-400" />
             <span className="font-bold text-base">
-              导出本组探究报告（可直接全屏截图、打印或下载存档）
+              {isAdminView
+                ? `正在审阅：第 ${groupId} 小组探究实验报告`
+                : `✅ 已同步提交至教师机 · 第 ${groupId} 小组探究实验报告`}
             </span>
           </div>
 
@@ -148,22 +155,24 @@ export const ReportModal: React.FC<ReportModalProps> = ({ record, onClose }) => 
               )}
             </button>
 
+            {isAdminView && (
+              <button
+                type="button"
+                onClick={() => exportTaskToWord('all', record, 'filled')}
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileText className="w-4 h-4" />
+                <span>导出 Word 报告 (.doc)</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleDownloadTxt}
               className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              <span>下载文本 (.txt)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => exportTaskToWord('all', record, 'filled')}
-              className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <FileText className="w-4 h-4" />
-              <span>导出 Word 报告 (.doc)</span>
+              <span>保存文本存档 (.txt)</span>
             </button>
 
             <button
@@ -172,7 +181,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ record, onClose }) => 
               className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>打印 / 导出 PDF</span>
+              <span>打印报告</span>
             </button>
 
             <button
@@ -207,9 +216,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({ record, onClose }) => 
                 <Users className="w-5 h-5 text-cyan-700" />
                 <span>第 {groupId || '未命名'} 小组</span>
               </div>
+              {memberNames && (
+                <div className="text-xs font-semibold text-slate-700 mt-0.5">
+                  小组成员：{memberNames}
+                </div>
+              )}
               <div className="flex items-center justify-end gap-1.5 text-xs font-mono text-slate-500 mt-1">
                 <Clock className="w-3.5 h-3.5" />
-                <span>生成时间：{lastUpdated}</span>
+                <span>提交时间：{lastUpdated}</span>
               </div>
             </div>
           </div>

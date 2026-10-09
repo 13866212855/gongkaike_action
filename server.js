@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +12,7 @@ const HOSTNAME = process.env.HOSTNAME || '0.0.0.0';
 const DIST_DIR = path.join(__dirname, 'dist');
 const DATA_DIR = path.join(__dirname, 'data');
 const REPORTS_FILE = path.join(DATA_DIR, 'group-reports.json');
+const CLASSROOM_FILE = path.join(DATA_DIR, 'classroom-config.json');
 
 // myusellm 统一大模型默认参数
 const APIHUB_BASE_URL =
@@ -18,6 +20,31 @@ const APIHUB_BASE_URL =
 const APIHUB_API_KEY =
   process.env.APIHUB_API_KEY ||
   'sk-GUdpKQNIwwJSZQ5mYyrMnuCJBOwSbB73c2N6NcnNfk5LoKyq';
+
+const DEFAULT_CLASSROOM_CONFIG = {
+  groupCount: 5,
+  unlockAnswerTask1: false,
+  unlockAnswerTask2: false,
+  unlockAnswerTask3: false,
+  teacherBroadcast: '',
+};
+
+function getLanIPv4Addresses() {
+  const ips = [];
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          ips.push(iface.address);
+        }
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  return ips;
+}
 
 function ensureDataDir() {
   try {
@@ -45,6 +72,13 @@ function ensureDataDir() {
       fs.writeFileSync(
         REPORTS_FILE,
         JSON.stringify({ reports: {} }, null, 2),
+        'utf-8'
+      );
+    }
+    if (!fs.existsSync(CLASSROOM_FILE)) {
+      fs.writeFileSync(
+        CLASSROOM_FILE,
+        JSON.stringify(DEFAULT_CLASSROOM_CONFIG, null, 2),
         'utf-8'
       );
     }
@@ -76,6 +110,27 @@ function writeReportsMap(reports) {
     );
   } catch (err) {
     console.error('[ERROR] Failed to write reports file:', err);
+  }
+}
+
+function readClassroomConfig() {
+  try {
+    ensureDataDir();
+    const raw = fs.readFileSync(CLASSROOM_FILE, 'utf-8');
+    return { ...DEFAULT_CLASSROOM_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_CLASSROOM_CONFIG };
+  }
+}
+
+function writeClassroomConfig(cfg) {
+  try {
+    ensureDataDir();
+    const next = { ...readClassroomConfig(), ...cfg };
+    fs.writeFileSync(CLASSROOM_FILE, JSON.stringify(next, null, 2), 'utf-8');
+    return next;
+  } catch {
+    return DEFAULT_CLASSROOM_CONFIG;
   }
 }
 
@@ -139,6 +194,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 课堂全局状态接口（教师控制答案解锁、广播通知）
+  if (pathname === '/api/classroom-state' && req.method === 'GET') {
+    const cfg = readClassroomConfig();
+    const ips = getLanIPv4Addresses();
+    sendJson(res, 200, {
+      ...cfg,
+      lanUrls: ips.map((ip) => `http://${ip}:7874`),
+    });
+    return;
+  }
+
+  if (pathname === '/api/classroom-state' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const updated = writeClassroomConfig(body || {});
+      const ips = getLanIPv4Addresses();
+      sendJson(res, 200, {
+        ok: true,
+        config: {
+          ...updated,
+          lanUrls: ips.map((ip) => `http://${ip}:7874`),
+        },
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err) });
+    }
+    return;
+  }
+
   // 后台登录验证接口
   if (pathname === '/api/admin/login' && req.method === 'POST') {
     try {
@@ -165,7 +249,10 @@ const server = http.createServer(async (req, res) => {
         numeric: true,
       })
     );
-    sendJson(res, 200, { reports: list });
+    sendJson(res, 200, {
+      reports: list,
+      classroomConfig: readClassroomConfig(),
+    });
     return;
   }
 
@@ -179,20 +266,59 @@ const server = http.createServer(async (req, res) => {
       }
       const cleanId = String(record.groupId).trim() || '1';
       const reportsMap = readReportsMap();
+      const existing = reportsMap[cleanId] || {};
       const nowStr = new Date().toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
       });
+
+      const mergedMembersMap = {
+        ...(existing.membersMap || {}),
+        ...(record.membersMap || {}),
+      };
+      const individualName = String(
+        record.studentName ?? record.memberNames ?? ''
+      ).trim();
+      const clientKey = String(record.clientId || 'default_pc').trim();
+      if (individualName) {
+        mergedMembersMap[clientKey] = individualName;
+      } else if (record.studentName === '') {
+        delete mergedMembersMap[clientKey];
+      }
+
+      const uniqueNames = Array.from(
+        new Set(
+          Object.values(mergedMembersMap)
+            .map((n) => String(n).trim())
+            .filter(Boolean)
+        )
+      );
+      const combinedMemberNames =
+        uniqueNames.length > 0
+          ? uniqueNames.join('、')
+          : existing.memberNames || '';
+
       reportsMap[cleanId] = {
+        ...existing,
         ...record,
         groupId: cleanId,
+        membersMap: mergedMembersMap,
+        memberNames: combinedMemberNames,
         lastUpdated: record.lastUpdated || nowStr,
-        submittedAt: record.submittedAt || nowStr,
-        isExportedReport: Boolean(record.isExportedReport ?? true),
+        submittedAt: record.isExportedReport
+          ? record.submittedAt || nowStr
+          : existing.submittedAt,
+        isExportedReport: Boolean(
+          record.isExportedReport || existing.isExportedReport
+        ),
       };
       writeReportsMap(reportsMap);
-      sendJson(res, 200, { ok: true, report: reportsMap[cleanId] });
+      sendJson(res, 200, {
+        ok: true,
+        report: reportsMap[cleanId],
+        classroomConfig: readClassroomConfig(),
+      });
     } catch (err) {
       sendJson(res, 500, { error: String(err) });
     }

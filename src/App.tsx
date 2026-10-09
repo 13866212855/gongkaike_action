@@ -7,10 +7,13 @@ import {
   CheckCircle2,
   RotateCcw,
   Users,
-  Save,
-  FileText,
+  Radio,
+  Wifi,
+  UserPlus,
+  X,
 } from 'lucide-react';
 import {
+  ClassroomConfig,
   GroupLabRecord,
   Task1Data,
   Task2Data,
@@ -22,10 +25,12 @@ import { Task1Compass } from './components/Task1Compass';
 import { Task2Dissection } from './components/Task2Dissection';
 import { Task3Construct } from './components/Task3Construct';
 import { ReportModal } from './components/ReportModal';
-import { WordExportModal } from './components/WordExportModal';
 import { AdminDashboard } from './components/AdminDashboard';
-import { exportTaskToWord, WordExportTarget } from './utils/wordExport';
-import { syncGroupReportToServer } from './utils/reportSync';
+import {
+  DEFAULT_CLASSROOM_CONFIG,
+  fetchClassroomConfig,
+  syncGroupReportToServer,
+} from './utils/reportSync';
 
 const STORAGE_PREFIX = 'campus_info_appraiser_v1_group_';
 const ACTIVE_GROUP_KEY = 'campus_info_appraiser_v1_active_group';
@@ -45,6 +50,9 @@ function checkIsAdminRoute(): boolean {
 function createDefaultRecord(groupId: string): GroupLabRecord {
   return {
     groupId,
+    studentName: '',
+    memberNames: '',
+    currentTask: 'task1',
     task1: {
       selectedAudiences: ['high1', 'grade9', 'agency'],
       timeNodeIndex: 0,
@@ -114,10 +122,13 @@ export default function App() {
   const [record, setRecord] = useState<GroupLabRecord>(() =>
     loadGroupRecord(groupId)
   );
+  const [classroomCfg, setClassroomCfg] = useState<ClassroomConfig>(
+    DEFAULT_CLASSROOM_CONFIG
+  );
   const [showReportModal, setShowReportModal] = useState(false);
-  const [wordModalTarget, setWordModalTarget] =
-    useState<WordExportTarget | null>(null);
-  const [savePulse, setSavePulse] = useState(false);
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [syncPulse, setSyncPulse] = useState(false);
+  const [submitSuccessToast, setSubmitSuccessToast] = useState(false);
 
   // Listen to browser popstate / hashchange for /admin navigation
   useEffect(() => {
@@ -132,10 +143,15 @@ export default function App() {
     };
   }, []);
 
-  const handleQuickExportTaskWord = (target: WordExportTarget) => {
-    exportTaskToWord(target, record, 'blank');
-    setWordModalTarget(target);
-  };
+  // Poll classroom state from teacher machine every 4 seconds (for answer unlocks & teacher broadcasts)
+  useEffect(() => {
+    if (isAdminRoute) return;
+    fetchClassroomConfig().then(setClassroomCfg);
+    const timer = window.setInterval(() => {
+      fetchClassroomConfig().then(setClassroomCfg);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [isAdminRoute]);
 
   // When groupId changes, load that group's record from localStorage
   const handleGroupChange = (newGroupId: string) => {
@@ -152,7 +168,7 @@ export default function App() {
     setRecord(loaded);
   };
 
-  // Persist record to localStorage and sync to backend server automatically
+  // Persist record to localStorage and sync to teacher machine automatically
   useEffect(() => {
     if (isAdminRoute) return;
     const keyId = groupId.trim() || '1';
@@ -161,12 +177,14 @@ export default function App() {
         `${STORAGE_PREFIX}${keyId}`,
         JSON.stringify(record)
       );
-      setSavePulse(true);
-      const timer = window.setTimeout(() => setSavePulse(false), 600);
+      setSyncPulse(true);
+      const timer = window.setTimeout(() => setSyncPulse(false), 600);
 
-      // Sync to backend if the group has filled in any answer or exported report
+      // Sync to teacher server if the group has filled in any answer, student name, or exported report
       const hasAnyProgress =
         record.isExportedReport ||
+        (record.studentName && record.studentName.trim() !== '') ||
+        (record.memberNames && record.memberNames.trim() !== '') ||
         record.task1.equalValueChoice !== '' ||
         record.task1.dependsOnInput.trim() !== '' ||
         record.task2.isDissected ||
@@ -177,11 +195,22 @@ export default function App() {
       const syncTimer = window.setTimeout(() => {
         if (hasAnyProgress) {
           syncGroupReportToServer(
-            { ...record, groupId: keyId },
+            { ...record, groupId: keyId, currentTask: activeTask },
             Boolean(record.isExportedReport)
-          );
+          ).then((synced) => {
+            if (
+              synced.memberNames &&
+              synced.memberNames !== record.memberNames
+            ) {
+              setRecord((prev) => ({
+                ...prev,
+                memberNames: synced.memberNames,
+                membersMap: synced.membersMap,
+              }));
+            }
+          });
         }
-      }, 400);
+      }, 350);
 
       return () => {
         window.clearTimeout(timer);
@@ -190,7 +219,7 @@ export default function App() {
     } catch {
       // Ignore storage write errors
     }
-  }, [record, groupId, isAdminRoute]);
+  }, [record, groupId, activeTask, isAdminRoute]);
 
   const handleOpenAndSubmitReport = async () => {
     const nowStr = new Date().toLocaleTimeString('zh-CN', {
@@ -201,6 +230,7 @@ export default function App() {
     const updatedRecord: GroupLabRecord = {
       ...record,
       groupId: groupId.trim() || '1',
+      currentTask: activeTask,
       lastUpdated: nowStr,
       submittedAt: nowStr,
       isExportedReport: true,
@@ -208,6 +238,8 @@ export default function App() {
     setRecord(updatedRecord);
     setShowReportModal(true);
     await syncGroupReportToServer(updatedRecord, true);
+    setSubmitSuccessToast(true);
+    window.setTimeout(() => setSubmitSuccessToast(false), 3500);
   };
 
   const updateTask1 = useCallback((updater: (prev: Task1Data) => Task1Data) => {
@@ -248,10 +280,11 @@ export default function App() {
 
   const handleResetCurrentGroup = () => {
     const fresh = createDefaultRecord(groupId || '1');
+    fresh.memberNames = record.memberNames || '';
     setRecord(fresh);
   };
 
-  // If visiting /admin, render the Admin Login / Dashboard view
+  // If visiting /admin, render the Teacher Admin Login / Dashboard view
   if (isAdminRoute) {
     return (
       <AdminDashboard
@@ -290,7 +323,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-900 pb-20">
-      {/* 固定顶部导航栏（深海科技蓝实验室风格，不包含任何后台入口按钮） */}
+      {/* 固定顶部导航栏（专为学生机上机操作设计的纯净数字实验室界面） */}
       <header className="sticky top-0 z-40 bg-slate-950 text-white border-b border-cyan-900/60 shadow-md no-print">
         <div className="max-w-[1380px] mx-auto px-4 lg:px-6 h-20 flex items-center justify-between gap-4">
           {/* 左侧：应用标题 + 副标题 */}
@@ -380,18 +413,8 @@ export default function App() {
             </button>
           </nav>
 
-          {/* 右侧：Word学案导出 + 小组编号输入框 */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => setWordModalTarget(activeTask)}
-              className="hidden xl:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/80 text-cyan-200 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
-              title="将任务一、任务二、任务三单独导出为可打印的 Word 纸质实验单"
-            >
-              <FileText className="w-4 h-4 text-cyan-400" />
-              <span>导出 Word 纸质实验单</span>
-            </button>
-
+          {/* 右侧：小组编号输入框 + 快捷选组/登记组员按钮 */}
+          <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center gap-1.5 bg-slate-900 border border-cyan-800/80 px-3 py-1.5 rounded-xl">
               <Users className="w-4 h-4 text-cyan-400 shrink-0" />
               <span className="text-sm font-semibold text-slate-200">第</span>
@@ -401,15 +424,45 @@ export default function App() {
                 onChange={(e) => handleGroupChange(e.target.value)}
                 aria-label="小组编号"
                 placeholder="1"
-                className="w-12 text-center bg-slate-800 border border-cyan-600/60 rounded-md py-0.5 px-1 text-base font-mono font-bold text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                className="w-11 text-center bg-slate-800 border border-cyan-600/60 rounded-md py-0.5 px-1 text-base font-mono font-bold text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400"
               />
               <span className="text-sm font-semibold text-slate-200">小组</span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowGroupPicker(true)}
+              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title="点击快速点选组号或填写你的姓名"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {record.studentName || record.memberNames
+                  ? `已登记：${record.studentName || record.memberNames}`
+                  : '选组/登记组员'}
+              </span>
+            </button>
           </div>
         </div>
+
+        {/* 教师机实时课堂广播通知横幅（仅当教师在后台发送课堂指令时显示） */}
+        {classroomCfg.teacherBroadcast && (
+          <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 px-4 py-2 text-sm font-bold flex items-center justify-center gap-2 shadow-xs">
+            <Radio className="w-4 h-4 animate-pulse shrink-0" />
+            <span>【教师机课堂广播】{classroomCfg.teacherBroadcast}</span>
+          </div>
+        )}
       </header>
 
-      {/* 主体探究实验内容区（浅色高对比度背景，确保机房屏幕与教室大屏投影清晰可读） */}
+      {/* 提交成功浮动反馈条 */}
+      {submitSuccessToast && (
+        <div className="fixed top-24 right-6 z-50 bg-emerald-700 text-white px-5 py-3 rounded-xl shadow-xl border border-emerald-500 flex items-center gap-2.5 text-sm font-bold animate-bounce no-print">
+          <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+          <span>第 {groupId} 小组探究报告已成功同步至教师机大屏！</span>
+        </div>
+      )}
+
+      {/* 主体探究实验内容区 */}
       <main className="flex-1 max-w-[1380px] w-full mx-auto px-4 lg:px-6 py-6">
         {activeTask === 'task1' && (
           <Task1Compass
@@ -419,7 +472,7 @@ export default function App() {
               setActiveTask('task2');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            onExportWord={() => handleQuickExportTaskWord('task1')}
+            answerUnlocked={classroomCfg.unlockAnswerTask1}
           />
         )}
 
@@ -431,7 +484,7 @@ export default function App() {
               setActiveTask('task3');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            onExportWord={() => handleQuickExportTaskWord('task2')}
+            answerUnlocked={classroomCfg.unlockAnswerTask2}
           />
         )}
 
@@ -440,25 +493,26 @@ export default function App() {
             data={record.task3}
             onChange={updateTask3}
             onOpenReport={handleOpenAndSubmitReport}
-            onExportWord={() => handleQuickExportTaskWord('task3')}
+            answerUnlocked={classroomCfg.unlockAnswerTask3}
           />
         )}
       </main>
 
-      {/* 底部全局固定栏：实时本地保存状态 + 分任务Word导出 + 导出本组探究报告按钮 */}
+      {/* 底部全局固定栏：实时连接教师机状态 + 导出本组探究报告按钮 */}
       <footer className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-xs border-t border-slate-200 shadow-lg no-print">
         <div className="max-w-[1380px] mx-auto px-4 lg:px-6 h-16 flex items-center justify-between gap-4">
-          {/* 左侧：自动保存与小组进度 */}
+          {/* 左侧：与教师机实时同步状态与小组进度 */}
           <div className="flex items-center gap-4 text-sm text-slate-600">
-            <div className="flex items-center gap-1.5 font-mono text-xs text-slate-500">
-              <Save
+            <div className="flex items-center gap-2 font-mono text-xs text-slate-600">
+              <Wifi
                 className={`w-4 h-4 transition-colors ${
-                  savePulse ? 'text-cyan-600' : 'text-emerald-600'
+                  syncPulse ? 'text-cyan-600' : 'text-emerald-600'
                 }`}
               />
               <span>
-                第 <strong className="text-slate-900">{groupId || '1'}</strong>{' '}
-                小组数据已自动保存（{record.lastUpdated}）
+                已连接教师机 · 第{' '}
+                <strong className="text-slate-900">{groupId || '1'}</strong>{' '}
+                小组作答实时保存中（{record.lastUpdated}）
               </span>
             </div>
 
@@ -466,16 +520,16 @@ export default function App() {
 
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-700">
-                探究任务完成度：
+                本组探究进度：
               </span>
               <span className="font-mono font-bold text-cyan-800 text-sm tabular-nums">
-                {completedTasksCount} / 3
+                {completedTasksCount} / 3 个任务已完成
               </span>
             </div>
           </div>
 
-          {/* 右侧：重置按钮 + 分任务导出Word按钮 + 全局固定“导出本组探究报告”按钮 */}
-          <div className="flex items-center gap-2.5">
+          {/* 右侧：重置按钮 + 全局固定“导出本组探究报告”按钮 */}
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleResetCurrentGroup}
@@ -483,17 +537,7 @@ export default function App() {
               title="清空当前小组填写内容并重新开始"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">重置本组数据</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setWordModalTarget(activeTask)}
-              className="px-4 py-2.5 rounded-xl border border-cyan-600 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              title="将任务一、任务二、任务三单独导出为 Word 文档供打印分发"
-            >
-              <FileText className="w-4 h-4 text-cyan-700" />
-              <span>分任务导出 Word（打印版）</span>
+              <span className="hidden md:inline">重置本组答案</span>
             </button>
 
             <button
@@ -508,20 +552,129 @@ export default function App() {
         </div>
       </footer>
 
-      {/* 导出本组探究报告弹窗 */}
+      {/* 机房学生机快捷选组与鉴别师成员姓名登记弹窗 */}
+      {showGroupPicker && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 no-print">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Users className="w-5 h-5 text-cyan-700" />
+                <h2 className="text-lg font-bold text-slate-900">
+                  小组编号选择与成员登记
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGroupPicker(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  1. 点击选择你所在的小组编号（共{' '}
+                  {Math.max(1, Math.min(30, Number(classroomCfg.groupCount) || 5))}{' '}
+                  个小组）：
+                </label>
+                <span className="text-xs font-mono text-cyan-700 font-semibold">
+                  当前：第 {groupId} 小组
+                </span>
+              </div>
+              <div
+                className={`grid gap-2.5 ${
+                  (Number(classroomCfg.groupCount) || 5) <= 5
+                    ? 'grid-cols-5'
+                    : (Number(classroomCfg.groupCount) || 5) <= 8
+                    ? 'grid-cols-4 sm:grid-cols-4'
+                    : 'grid-cols-4 sm:grid-cols-6'
+                }`}
+              >
+                {Array.from(
+                  {
+                    length: Math.max(
+                      1,
+                      Math.min(30, Number(classroomCfg.groupCount) || 5)
+                    ),
+                  },
+                  (_, i) => String(i + 1)
+                ).map((num) => {
+                  const active = groupId === num;
+                  return (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handleGroupChange(num)}
+                      className={`py-2.5 rounded-xl font-mono font-bold text-sm border transition-all cursor-pointer ${
+                        active
+                          ? 'bg-cyan-700 text-white border-cyan-700 shadow-xs scale-102'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-500 hover:bg-cyan-50/40'
+                      }`}
+                    >
+                      第{num}组
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                2. 填写本组鉴别师成员姓名（只需填写你自己的姓名，省时高效）：
+              </label>
+              <input
+                type="text"
+                value={record.studentName ?? record.memberNames ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setRecord((prev) => ({
+                    ...prev,
+                    studentName: val,
+                    memberNames: prev.memberNames || val,
+                    lastUpdated: new Date().toLocaleTimeString('zh-CN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    }),
+                  }));
+                }}
+                placeholder="例如：张同学（直接填你自己的姓名即可，无需填全组名单）"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-cyan-600"
+              />
+              <div className="p-2.5 rounded-xl bg-cyan-50/80 border border-cyan-200 text-xs text-cyan-900 leading-relaxed space-y-1">
+                <p>
+                  ⚡ <strong>课堂快速登记说明：</strong>
+                  每人只需在自己电脑上填写<strong>自己的姓名</strong>（仅需2秒），若同组多位同学登记，教师机后台将自动合并汇总为本组完整成员名单！
+                </p>
+                {record.memberNames && (
+                  <p className="font-mono font-bold text-cyan-800 pt-0.5">
+                    📋 当前第 {groupId} 组已汇总成员：{record.memberNames}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowGroupPicker(false)}
+                className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold cursor-pointer"
+              >
+                确认并开始实验（第 {groupId} 小组）
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 导出本组探究报告弹窗（学生视角） */}
       {showReportModal && (
         <ReportModal
           record={record}
+          isAdminView={false}
           onClose={() => setShowReportModal(false)}
-        />
-      )}
-
-      {/* 分任务导出可打印 Word 实验单中心弹窗 */}
-      {wordModalTarget && (
-        <WordExportModal
-          record={record}
-          initialTarget={wordModalTarget}
-          onClose={() => setWordModalTarget(null)}
         />
       )}
     </div>

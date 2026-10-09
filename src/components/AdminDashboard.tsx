@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Shield,
   Lock,
+  Unlock,
   User,
   LogOut,
   RefreshCw,
@@ -19,21 +20,24 @@ import {
   Compass,
   Microscope,
   Layers,
+  Radio,
+  Send,
+  Wifi,
 } from 'lucide-react';
-import { GroupLabRecord } from '../types/lab';
-import {
-  AUDIENCE_META,
-  CAMPUS_CASES,
-  RED_FLAG_OPTIONS,
-} from '../data/labPresets';
+import { ClassroomConfig, GroupLabRecord } from '../types/lab';
+import { CAMPUS_CASES, RED_FLAG_OPTIONS } from '../data/labPresets';
 import {
   clearAllGroupReports,
+   DEFAULT_CLASSROOM_CONFIG,
   deleteGroupReport,
   fetchAllGroupReports,
+  fetchClassroomConfig,
   seedDemoGroupReports,
+  updateClassroomConfig,
 } from '../utils/reportSync';
 import { ReportModal } from './ReportModal';
-import { exportTaskToWord } from '../utils/wordExport';
+import { WordExportModal } from './WordExportModal';
+import { exportTaskToWord, WordExportTarget } from '../utils/wordExport';
 
 const ADMIN_SESSION_KEY = 'gongkaike_admin_logged_in';
 
@@ -58,19 +62,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const [reports, setReports] = useState<GroupLabRecord[]>([]);
+  const [classroomCfg, setClassroomCfg] = useState<ClassroomConfig>(
+    DEFAULT_CLASSROOM_CONFIG
+  );
+  const [broadcastInput, setBroadcastInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [activeTab, setActiveTab] = useState<'analytics' | 'groups'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'groups' | 'word'>(
+    'analytics'
+  );
   const [inspectingGroup, setInspectingGroup] = useState<GroupLabRecord | null>(
     null
   );
+  const [wordModalTarget, setWordModalTarget] =
+    useState<WordExportTarget | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
 
-  const loadReports = useCallback(async () => {
+  const loadReportsAndConfig = useCallback(async () => {
     setIsLoading(true);
     try {
-      const list = await fetchAllGroupReports();
+      const [list, cfg] = await Promise.all([
+        fetchAllGroupReports(),
+        fetchClassroomConfig(),
+      ]);
       setReports(list);
+      setClassroomCfg(cfg);
+      setBroadcastInput((prev) =>
+        prev === '' && cfg.teacherBroadcast ? cfg.teacherBroadcast : prev
+      );
     } finally {
       setIsLoading(false);
     }
@@ -78,16 +97,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    loadReports();
-  }, [isAuthenticated, loadReports]);
+    loadReportsAndConfig();
+  }, [isAuthenticated, loadReportsAndConfig]);
 
   useEffect(() => {
     if (!isAuthenticated || !autoRefresh) return;
     const timer = window.setInterval(() => {
-      loadReports();
-    }, 5000);
+      fetchAllGroupReports().then(setReports);
+    }, 4000);
     return () => window.clearInterval(timer);
-  }, [isAuthenticated, autoRefresh, loadReports]);
+  }, [isAuthenticated, autoRefresh]);
+
+  const handleToggleUnlock = async (
+    key: 'unlockAnswerTask1' | 'unlockAnswerTask2' | 'unlockAnswerTask3'
+  ) => {
+    const nextVal = !classroomCfg[key];
+    const updated = await updateClassroomConfig({ [key]: nextVal });
+    setClassroomCfg(updated);
+  };
+
+  const handleUnlockAllAnswers = async (unlock: boolean) => {
+    const updated = await updateClassroomConfig({
+      unlockAnswerTask1: unlock,
+      unlockAnswerTask2: unlock,
+      unlockAnswerTask3: unlock,
+    });
+    setClassroomCfg(updated);
+  };
+
+  const handleSendBroadcast = async (text: string) => {
+    setBroadcastInput(text);
+    const updated = await updateClassroomConfig({
+      teacherBroadcast: text.trim(),
+    });
+    setClassroomCfg(updated);
+  };
+
+  const handleGroupCountChange = async (nextCount: number) => {
+    const clamped = Math.max(1, Math.min(30, Math.round(nextCount) || 5));
+    const updated = await updateClassroomConfig({
+      groupCount: clamped,
+    });
+    setClassroomCfg(updated);
+  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +160,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         window.sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
         setIsAuthenticated(true);
         setPassword('');
+        setIsLoggingIn(false);
         return;
       }
     } catch {
@@ -148,13 +201,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleDeleteSingle = async (groupId: string) => {
     await deleteGroupReport(groupId);
-    await loadReports();
+    await loadReportsAndConfig();
   };
 
   const handleClearAll = async () => {
     await clearAllGroupReports();
     setConfirmClearAll(false);
-    await loadReports();
+    await loadReportsAndConfig();
   };
 
   // ==================== 未登录状态：显示后台登录界面（严禁展示默认账号密码） ====================
@@ -167,13 +220,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <Shield className="w-8 h-8" />
             </div>
             <div className="text-xs font-mono text-cyan-400 mb-1">
-              1.3 信息及其特征 · 教师教学管理终端
+              1.3 信息及其特征 · 机房教师机管理终端
             </div>
             <h1 className="text-2xl font-extrabold tracking-tight text-white">
               数字信息鉴别师工作站 · 后台登录
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              登录后可查看各小组导出的探究报告及全班作答汇总分析
+              登录后可控制课堂进程、查看全班各组报告及导出纸质实验单
             </p>
           </div>
 
@@ -226,7 +279,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               disabled={isLoggingIn}
               className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-base shadow-md transition-all cursor-pointer mt-2"
             >
-              {isLoggingIn ? '正在验证身份...' : '登录教师管理后台'}
+              {isLoggingIn ? '正在验证身份...' : '登录教师机管理后台'}
             </button>
           </form>
 
@@ -309,11 +362,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       ? Math.round((totalCompletedTasks / (totalGroups * 3)) * 100)
       : 0;
 
+  // 构造一个供后台导出空模板使用的默认 record
+  const dummyRecordForWord: GroupLabRecord = reports[0] || {
+    groupId: '1',
+    task1: {
+      selectedAudiences: ['high1', 'grade9', 'agency'],
+      timeNodeIndex: 0,
+      equalValueChoice: '',
+      dependsOnInput: '',
+      timeTrendInput: '',
+    },
+    task2: {
+      activePresetId: 'weather',
+      customTextA: '',
+      customTextB: '',
+      isDissected: false,
+      selectedFlags: [],
+      verdictChoice: '',
+      causePurposeInput: '',
+      causeProcessInput: '',
+      characteristicInput: '',
+      actionInput: '',
+    },
+    task3: {
+      caseMatches: {},
+      carrierConceptInput: '',
+      sharingConceptInput: '',
+      selectedPledges: [],
+      groupSlogan: '',
+    },
+    lastUpdated: '',
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col">
       {/* 顶部管理导航栏 */}
       <header className="sticky top-0 z-40 bg-slate-950 text-white border-b border-cyan-900/60 shadow-md no-print">
-        <div className="max-w-[1400px] mx-auto px-4 lg:px-6 h-20 flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-[1420px] mx-auto px-4 lg:px-6 h-20 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 flex items-center justify-center text-slate-950 font-extrabold text-lg">
               <Shield className="w-6 h-6" />
@@ -321,19 +406,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg md:text-xl font-extrabold tracking-tight text-white">
-                  数字信息鉴别师工作站 · 教师管理后台
+                  数字信息鉴别师工作站 · 机房教师机总控后台
                 </h1>
                 <span className="text-xs font-mono text-cyan-300 bg-cyan-950 border border-cyan-700 px-2 py-0.5 rounded">
                   /admin
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-mono">
-                全班各小组《1.3 信息及其特征》探究报告汇总与实时学情诊断面板
+                课堂节奏控制 · 全班实时学情汇总 · 小组报告投屏点评 · 纸质实验单导出
               </p>
             </div>
           </div>
 
-          {/* 视图切换标签 */}
+          {/* 三个核心功能标签切换 */}
           <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
             <button
               type="button"
@@ -358,7 +443,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               }`}
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>各小组导出报告明细 ({totalGroups}份)</span>
+              <span>各小组报告与机房监控 ({totalGroups}份)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('word')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+                activeTab === 'word'
+                  ? 'bg-cyan-500 text-slate-950 shadow-xs'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>分任务导出 Word（打印版）</span>
             </button>
           </div>
 
@@ -372,7 +470,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   ? 'bg-emerald-950/80 border-emerald-600/70 text-emerald-300'
                   : 'bg-slate-900 border-slate-700 text-slate-400'
               }`}
-              title="开启后每5秒自动同步各小组最新提交的探究报告"
+              title="开启后每4秒自动同步各学生机最新提交的数据"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 ${autoRefresh ? 'animate-spin' : ''}`}
@@ -382,10 +480,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <button
               type="button"
-              onClick={loadReports}
+              onClick={loadReportsAndConfig}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
             >
-              立即刷新
+              刷新
             </button>
 
             <button
@@ -403,23 +501,258 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               className="px-3 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>退出后台</span>
+              <span>退出</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* 主体内容区 */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto px-4 lg:px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-[1420px] w-full mx-auto px-4 lg:px-6 py-6 space-y-6">
+        {/* 机房公开课中控台：控制学生机参考答案解锁 + 课堂广播通知 */}
+        <section className="bg-slate-900 text-white rounded-xl p-5 border border-slate-800 shadow-sm space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0">
+                <Radio className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-white">
+                    机房课堂总控台（实时控制全体学生机界面状态）
+                  </h2>
+                  {classroomCfg.lanUrls && classroomCfg.lanUrls.length > 0 && (
+                    <span className="text-xs font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-700/60 px-2.5 py-0.5 rounded flex items-center gap-1">
+                      <Wifi className="w-3.5 h-3.5" />
+                      学生机访问地址：{classroomCfg.lanUrls[0]}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">
+                  学生上机探究期间默认锁定隐藏参考答案以防直接照抄；教师点评时点击右侧按钮即可向全班学生机同步解锁标准答案
+                </p>
+              </div>
+            </div>
+
+            {/* 三个任务的参考答案远程解锁开关 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-mono text-slate-400 mr-1">
+                学生机答案显示控制：
+              </span>
+              {[
+                {
+                  key: 'unlockAnswerTask1' as const,
+                  label: '任务一参考答案',
+                },
+                {
+                  key: 'unlockAnswerTask2' as const,
+                  label: '任务二参考答案',
+                },
+                {
+                  key: 'unlockAnswerTask3' as const,
+                  label: '任务三参考答案',
+                },
+              ].map((item) => {
+                const isUnlocked = classroomCfg[item.key];
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => handleToggleUnlock(item.key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isUnlocked
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-xs'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-600'
+                    }`}
+                  >
+                    {isUnlocked ? (
+                      <>
+                        <Unlock className="w-3.5 h-3.5" />
+                        <span>{item.label}：已向学生公布</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{item.label}：已锁定隐藏</span>
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleUnlockAllAnswers(
+                    !(
+                      classroomCfg.unlockAnswerTask1 &&
+                      classroomCfg.unlockAnswerTask2 &&
+                      classroomCfg.unlockAnswerTask3
+                    )
+                  )
+                }
+                className="px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700 text-cyan-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                {classroomCfg.unlockAnswerTask1 &&
+                classroomCfg.unlockAnswerTask2 &&
+                classroomCfg.unlockAnswerTask3
+                  ? '全部重新锁回'
+                  : '一键解锁全部答案'}
+              </button>
+            </div>
+          </div>
+
+          {/* 课堂分组数量配置栏（默认5组，动态控制学生机右上角选组窗口） */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5 whitespace-nowrap">
+                <Users className="w-4 h-4 text-cyan-400" />
+                👥 课堂分组数量配置（控制学生机右上角“选组”展示数量）：
+              </span>
+
+              <div className="flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-lg p-1">
+                {[4, 5, 6, 8, 10, 12].map((num) => {
+                  const currentCount = Number(classroomCfg.groupCount) || 5;
+                  const active = currentCount === num;
+                  return (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handleGroupCountChange(num)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer ${
+                        active
+                          ? 'bg-cyan-500 text-slate-950 shadow-2xs'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {num}组{num === 5 ? '(默认)' : ''}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs text-slate-300 ml-1">
+                <span>自定义：</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={classroomCfg.groupCount || 5}
+                  onChange={(e) =>
+                    handleGroupCountChange(Number(e.target.value))
+                  }
+                  className="w-16 px-2 py-1 rounded-lg bg-slate-950 border border-slate-700 text-center font-mono font-bold text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+                <span>个小组</span>
+              </div>
+            </div>
+
+            {/* 各小组在线/提交状态速览灯 */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-slate-400 mr-1">
+                各组接入状态：
+              </span>
+              {Array.from(
+                {
+                  length: Math.max(
+                    1,
+                    Math.min(30, Number(classroomCfg.groupCount) || 5)
+                  ),
+                },
+                (_, i) => String(i + 1)
+              ).map((gid) => {
+                const found = reports.find((r) => r.groupId === gid);
+                const isSubmitted = Boolean(found?.isExportedReport);
+                const isActive = Boolean(found);
+                return (
+                  <span
+                    key={gid}
+                    title={
+                      found
+                        ? `第${gid}组${
+                            found.memberNames ? `（${found.memberNames}）` : ''
+                          } - ${isSubmitted ? '已提交报告' : '正在作答中'}`
+                        : `第${gid}组尚未接入`
+                    }
+                    className={`px-2 py-0.5 rounded text-xs font-mono font-bold border ${
+                      isSubmitted
+                        ? 'bg-emerald-950/90 border-emerald-500 text-emerald-300'
+                        : isActive
+                        ? 'bg-cyan-950/90 border-cyan-500 text-cyan-300'
+                        : 'bg-slate-800/70 border-slate-700 text-slate-500'
+                    }`}
+                  >
+                    {gid}组{isSubmitted ? '✓' : isActive ? '●' : ''}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 课堂实时广播提示条发送区 */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex-1 flex items-center gap-2">
+              <span className="text-xs font-semibold text-cyan-300 whitespace-nowrap">
+                📢 向全体学生机顶部发送课堂指令：
+              </span>
+              <input
+                type="text"
+                value={broadcastInput}
+                onChange={(e) => setBroadcastInput(e.target.value)}
+                placeholder="输入课堂提示（例如：请各小组在2分钟内完成任务二并点击提交报告），留空则关闭广播"
+                className="flex-1 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <button
+                type="button"
+                onClick={() => handleSendBroadcast(broadcastInput)}
+                className="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>推送广播</span>
+              </button>
+              {classroomCfg.teacherBroadcast && (
+                <button
+                  type="button"
+                  onClick={() => handleSendBroadcast('')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer whitespace-nowrap"
+                >
+                  撤回广播
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-slate-400">快捷指令：</span>
+              {[
+                '请各组抓紧完成【任务一·时空罗盘】，完成后进入任务二',
+                '请点击【🔬开始解剖】观察三维度分析并完成真伪宣判',
+                '实验即将结束，请各组点击右下角【导出本组探究报告】提交！',
+              ].map((presetMsg, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleSendBroadcast(presetMsg)}
+                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                >
+                  指令{i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* 顶部 5 大全班核心指标卡片 */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
             <div className="text-xs font-mono text-slate-500 mb-1">
-              已同步报告小组数
+              已接入 / 预设分组总数
             </div>
             <div className="flex items-baseline justify-between">
               <span className="text-3xl font-mono font-extrabold text-slate-900 tabular-nums">
-                {totalGroups}
+                {totalGroups}{' '}
+                <span className="text-lg font-normal text-slate-400">
+                  / {classroomCfg.groupCount || 5}
+                </span>
               </span>
               <span className="text-xs font-semibold text-cyan-700">
                 个实验小组
@@ -489,11 +822,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="flex items-center gap-2 text-sm text-slate-700">
             <Users className="w-4 h-4 text-cyan-700" />
             <span>
-              当前共收集到 <strong>{totalGroups}</strong> 个小组的实验数据（前台学生点击“导出本组探究报告”或填写答案时将自动汇入此面板）。
+              当前已实时收集 <strong>{totalGroups}</strong> 个学生机小组的实验数据（已提交结项报告：
+              <strong className="text-emerald-700 mx-1">
+                {reports.filter((r) => r.isExportedReport).length}
+              </strong>
+              组）。
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setWordModalTarget('all')}
+              className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-cyan-400" />
+              <span>打开纸质实验单 Word 导出预览中心</span>
+            </button>
+
             <button
               type="button"
               onClick={handleSeedDemo}
@@ -501,7 +847,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               className="px-3.5 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 border border-cyan-300 text-cyan-900 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-cyan-700" />
-              <span>生成4组课堂演示数据（供课前彩排测试）</span>
+              <span>生成5组课堂演示数据（课前彩排）</span>
             </button>
 
             {totalGroups > 0 && (
@@ -513,7 +859,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 text-slate-600 hover:text-rose-700 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>清空全部小组数据</span>
+                    <span>课前清零全部小组数据</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-300 px-2.5 py-1 rounded-lg">
@@ -541,18 +887,100 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </section>
 
-        {/* 空状态提示 */}
-        {totalGroups === 0 ? (
+        {/* ==================== 视图三：分任务导出 Word（打印版）专区 ==================== */}
+        {activeTab === 'word' ? (
+          <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs space-y-6">
+            <div className="border-b border-slate-100 pb-4 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  📄 课堂纸质实验单 · 分任务导出 Word（供无电脑教室打印分发或教案存档）
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  已从学生端界面移除并迁移至此处。您可以将任务一、任务二、任务三单独导出为标准 A4 排版的 Word 文档（.doc）
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWordModalTarget('task1')}
+                className="px-4 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white text-sm font-bold flex items-center gap-2 cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>打开全屏 A4 排版预览与打印中心</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                {
+                  id: 'task1' as WordExportTarget,
+                  title: '【任务一·问诊】Word实验单',
+                  desc: '含时空罗盘6节点数据对照表、相对性与时效性结论填空',
+                },
+                {
+                  id: 'task2' as WordExportTarget,
+                  title: '【任务二·解剖】Word实验单',
+                  desc: '含A/B快讯对照、语文分词热力框、科学极值表与真伪宣判',
+                },
+                {
+                  id: 'task3' as WordExportTarget,
+                  title: '【任务三·建构】Word实验单',
+                  desc: '含五大特征速查表、校园5情境配对勾选表与行动口号栏',
+                },
+                {
+                  id: 'all' as WordExportTarget,
+                  title: '【任务一至三】全套合集 Word',
+                  desc: '包含全部三个任务完整导学案，每任务自动分页独立一页A4',
+                },
+              ].map((item) => (
+                <div
+                  key={item.id}
+                  className="p-5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between gap-4"
+                >
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      {item.title}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      {item.desc}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        exportTaskToWord(item.id, dummyRecordForWord, 'blank')
+                      }
+                      className="w-full py-2 px-3 rounded-lg bg-cyan-700 hover:bg-cyan-800 text-white text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      📥 下载【学生空白打印版】(.doc)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        exportTaskToWord(item.id, dummyRecordForWord, 'teacher')
+                      }
+                      className="w-full py-2 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      🎓 下载【教师参考答案版】(.doc)
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : totalGroups === 0 ? (
+          /* 空状态提示 */
           <section className="bg-white border border-slate-200 rounded-xl p-12 text-center space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
               <FileSpreadsheet className="w-7 h-7" />
             </div>
             <div className="max-w-lg mx-auto space-y-1.5">
               <h2 className="text-xl font-bold text-slate-900">
-                暂未收到各小组导出的探究报告
+                等待机房各学生机接入并提交数据...
               </h2>
               <p className="text-sm text-slate-500 leading-relaxed">
-                当学生在实验前台填写答案或点击底部“导出本组探究报告”按钮时，各小组的数据将实时同步至本后台。您也可以点击上方“生成4组课堂演示数据”按钮预览全班汇总分析效果。
+                学生机通过浏览器访问教师机地址后，在实验过程中填写的答案及点击底部“导出本组探究报告”的结果将自动实时汇总至此面板。
               </p>
             </div>
             <button
@@ -561,7 +989,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               className="px-5 py-2.5 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white text-sm font-bold shadow-xs transition-colors inline-flex items-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              <span>立即载入课堂演示模拟数据</span>
+              <span>立即载入5组课堂模拟数据（预览公开课汇总效果）</span>
             </button>
           </section>
         ) : activeTab === 'analytics' ? (
@@ -913,7 +1341,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       className="p-3.5 rounded-lg bg-slate-800/90 border border-slate-700 flex flex-col justify-between gap-2"
                     >
                       <div className="flex items-center justify-between text-xs font-mono text-cyan-300">
-                        <span>第 {r.groupId} 小组</span>
+                        <span>
+                          第 {r.groupId} 小组
+                          {r.memberNames ? `（${r.memberNames}）` : ''}
+                        </span>
                         <span>
                           Q1:{r.task3.carrierConceptInput || '未填'} / Q2:
                           {r.task3.sharingConceptInput || '未填'}
@@ -929,15 +1360,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </section>
           </div>
         ) : (
-          /* ==================== 视图二：各小组“导出本组探究报告”明细与审阅 ==================== */
-          <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs space-y-4">
+          /* ==================== 视图二：各小组“导出本组探究报告”明细与机房监控 ==================== */
+          <section className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">
-                  各小组“导出本组探究报告”结果明细表
+                  机房各小组探究报告与实时进度明细表
                 </h2>
                 <p className="text-xs text-slate-500">
-                  点击任意小组右侧的“查看完整报告”即可在大屏弹出该组报告单进行课堂点评，或将其单独导出为 Word 文档
+                  点击任意小组右侧的“查看该组完整报告（投屏点评）”即可在大屏展示该组实验报告，或导出为 Word 文档
                 </p>
               </div>
             </div>
@@ -961,6 +1392,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <span className="px-3 py-1 rounded-lg bg-cyan-950 text-cyan-300 font-mono font-bold text-base">
                             第 {r.groupId} 小组
                           </span>
+                          {r.memberNames && (
+                            <span className="text-xs font-semibold text-slate-700">
+                              成员：{r.memberNames}
+                            </span>
+                          )}
                           {r.isExportedReport ? (
                             <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
                               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -973,7 +1409,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           )}
                         </div>
                         <span className="text-xs font-mono text-slate-500">
-                          更新时间：{r.lastUpdated}
+                          更新：{r.lastUpdated}
                         </span>
                       </div>
 
@@ -1108,11 +1544,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </main>
 
-      {/* 查看指定小组完整报告弹窗（复用前台导出报告组件） */}
+      {/* 查看指定小组完整报告弹窗（管理员视角支持导出 Word） */}
       {inspectingGroup && (
         <ReportModal
           record={inspectingGroup}
+          isAdminView={true}
           onClose={() => setInspectingGroup(null)}
+        />
+      )}
+
+      {/* 纸质实验单 Word 导出与全屏预览弹窗 */}
+      {wordModalTarget && (
+        <WordExportModal
+          record={dummyRecordForWord}
+          initialTarget={wordModalTarget}
+          onClose={() => setWordModalTarget(null)}
         />
       )}
     </div>

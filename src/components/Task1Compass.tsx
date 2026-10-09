@@ -6,13 +6,11 @@ import {
   Play,
   Pause,
   RotateCcw,
-  Eye,
-  EyeOff,
   CheckCircle2,
   AlertTriangle,
   Sparkles,
   ArrowRight,
-  FileText,
+  Lock,
 } from 'lucide-react';
 import { AudienceKey, Task1Data } from '../types/lab';
 import { AUDIENCE_META, TIME_NODES } from '../data/labPresets';
@@ -21,17 +19,16 @@ interface Task1CompassProps {
   data: Task1Data;
   onChange: (updater: (prev: Task1Data) => Task1Data) => void;
   onNextTask: () => void;
-  onExportWord: () => void;
+  answerUnlocked?: boolean;
 }
 
 export const Task1Compass: React.FC<Task1CompassProps> = ({
   data,
   onChange,
   onNextTask,
-  onExportWord,
+  answerUnlocked = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showAnswerKey, setShowAnswerKey] = useState(false);
 
   const currentNode = TIME_NODES[data.timeNodeIndex] || TIME_NODES[0];
 
@@ -122,25 +119,13 @@ export const Task1Compass: React.FC<Task1CompassProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 px-3.5 py-2 rounded-lg border border-slate-200">
-              <span className="font-semibold text-slate-800">实验操作指引：</span>
-              <span>① 勾选对比受众</span>
-              <span aria-hidden="true">→</span>
-              <span>② 拖动时间滑块观察曲线</span>
-              <span aria-hidden="true">→</span>
-              <span>③ 填写探究结论</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={onExportWord}
-              className="px-3.5 py-2 rounded-lg border border-cyan-600 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              title="将任务一单独导出为可打印的 Word 纸质实验单"
-            >
-              <FileText className="w-4 h-4 text-cyan-700" />
-              <span>导出【任务一】Word</span>
-            </button>
+          <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 px-3.5 py-2 rounded-lg border border-slate-200">
+            <span className="font-semibold text-slate-800">实验操作指引：</span>
+            <span>① 勾选对比受众</span>
+            <span aria-hidden="true">→</span>
+            <span>② 拖动时间滑块观察曲线</span>
+            <span aria-hidden="true">→</span>
+            <span>③ 填写探究结论</span>
           </div>
         </div>
 
@@ -820,25 +805,19 @@ export const Task1Compass: React.FC<Task1CompassProps> = ({
           </div>
         </div>
 
-        {/* 底部操作栏：查看参考答案 + 进入下一任务 */}
+        {/* 底部操作栏：教师解锁参考答案状态 + 进入下一任务 */}
         <div className="mt-6 pt-5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setShowAnswerKey((s) => !s)}
-            className="px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            {showAnswerKey ? (
-              <>
-                <EyeOff className="w-4 h-4 text-slate-500" />
-                <span>隐藏参考答案</span>
-              </>
-            ) : (
-              <>
-                <Eye className="w-4 h-4 text-cyan-700" />
-                <span>查看参考答案（教师点评用）</span>
-              </>
-            )}
-          </button>
+          {answerUnlocked ? (
+            <span className="text-sm font-bold text-cyan-800 flex items-center gap-1.5 bg-cyan-50 px-3.5 py-2 rounded-lg border border-cyan-200">
+              <Sparkles className="w-4 h-4 text-cyan-600" />
+              <span>教师机已公布本任务参考结论（请对照下方解析自查）</span>
+            </span>
+          ) : (
+            <span className="text-xs font-mono text-slate-500 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <span>课堂探究进行中 · 教师讲评时将向全班同步解锁参考结论</span>
+            </span>
+          )}
 
           <button
             type="button"
@@ -850,12 +829,12 @@ export const Task1Compass: React.FC<Task1CompassProps> = ({
           </button>
         </div>
 
-        {/* 隐藏的参考答案面板 */}
-        {showAnswerKey && (
+        {/* 教师机解锁后显示的参考答案面板 */}
+        {answerUnlocked && (
           <div className="mt-4 p-4 rounded-xl bg-cyan-950 text-white border border-cyan-800">
             <div className="flex items-center gap-2 text-cyan-300 text-xs font-mono mb-1.5">
               <Sparkles className="w-4 h-4" />
-              <span>课堂点评参考答案（1.3 信息及其特征）</span>
+              <span>课堂点评标准参考结论（1.3 信息及其特征）</span>
             </div>
             <p className="text-base leading-relaxed">
               1. 信息是否对所有人都具备同等价值？<strong className="text-cyan-300">否</strong>。

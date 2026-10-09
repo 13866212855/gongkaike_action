@@ -1,7 +1,86 @@
 import { PLEDGE_ITEMS } from '../data/labPresets';
-import { GroupLabRecord } from '../types/lab';
+import { ClassroomConfig, GroupLabRecord } from '../types/lab';
 
 const STORAGE_PREFIX = 'campus_info_appraiser_v1_group_';
+const CLASSROOM_CONFIG_KEY = 'campus_info_appraiser_v1_classroom_cfg';
+const CLIENT_ID_KEY = 'campus_info_appraiser_v1_client_id';
+
+export const DEFAULT_CLASSROOM_CONFIG: ClassroomConfig = {
+  groupCount: 5,
+  unlockAnswerTask1: false,
+  unlockAnswerTask2: false,
+  unlockAnswerTask3: false,
+  teacherBroadcast: '',
+  lanUrls: [],
+};
+
+export function getOrCreateClientId(): string {
+  try {
+    let cid = window.localStorage.getItem(CLIENT_ID_KEY);
+    if (!cid) {
+      cid = `pc_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
+      window.localStorage.setItem(CLIENT_ID_KEY, cid);
+    }
+    return cid;
+  } catch {
+    return 'pc_default';
+  }
+}
+
+export async function fetchClassroomConfig(): Promise<ClassroomConfig> {
+  try {
+    const res = await fetch('/api/classroom-state');
+    if (res.ok) {
+      const data = await res.json();
+      const merged = { ...DEFAULT_CLASSROOM_CONFIG, ...data };
+      window.localStorage.setItem(CLASSROOM_CONFIG_KEY, JSON.stringify(merged));
+      return merged;
+    }
+  } catch {
+    // Fallback to localStorage
+  }
+  try {
+    const raw = window.localStorage.getItem(CLASSROOM_CONFIG_KEY);
+    if (raw) {
+      return { ...DEFAULT_CLASSROOM_CONFIG, ...JSON.parse(raw) };
+    }
+  } catch {
+    // Ignore
+  }
+  return DEFAULT_CLASSROOM_CONFIG;
+}
+
+export async function updateClassroomConfig(
+  patch: Partial<ClassroomConfig>
+): Promise<ClassroomConfig> {
+  try {
+    const res = await fetch('/api/classroom-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.config) {
+        window.localStorage.setItem(
+          CLASSROOM_CONFIG_KEY,
+          JSON.stringify(data.config)
+        );
+        return data.config;
+      }
+    }
+  } catch {
+    // Offline fallback
+  }
+  const current = await fetchClassroomConfig();
+  const next = { ...current, ...patch };
+  try {
+    window.localStorage.setItem(CLASSROOM_CONFIG_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore
+  }
+  return next;
+}
 
 /**
  * Reads all group records stored in current browser's localStorage
@@ -40,9 +119,36 @@ export async function syncGroupReportToServer(
     second: '2-digit',
   });
   const cleanId = String(record.groupId || '1').trim() || '1';
+  const clientId = record.clientId || getOrCreateClientId();
+  const individualName = String(
+    record.studentName ?? record.memberNames ?? ''
+  ).trim();
+
+  const localMembersMap: Record<string, string> = {
+    ...(record.membersMap || {}),
+  };
+  if (individualName) {
+    localMembersMap[clientId] = individualName;
+  } else if (record.studentName === '') {
+    delete localMembersMap[clientId];
+  }
+  const uniqueLocalNames = Array.from(
+    new Set(
+      Object.values(localMembersMap)
+        .map((n) => String(n).trim())
+        .filter(Boolean)
+    )
+  );
+
   const payload: GroupLabRecord = {
     ...record,
     groupId: cleanId,
+    clientId,
+    membersMap: localMembersMap,
+    memberNames:
+      uniqueLocalNames.length > 0
+        ? uniqueLocalNames.join('、')
+        : record.memberNames || '',
     lastUpdated: record.lastUpdated || nowStr,
     submittedAt: isExportedReport ? nowStr : record.submittedAt,
     isExportedReport: Boolean(isExportedReport || record.isExportedReport),
@@ -65,7 +171,22 @@ export async function syncGroupReportToServer(
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.report) return data.report;
+      if (data.report) {
+        const mergedFromServer: GroupLabRecord = {
+          ...payload,
+          ...data.report,
+          studentName: record.studentName,
+        };
+        try {
+          window.localStorage.setItem(
+            `${STORAGE_PREFIX}${cleanId}`,
+            JSON.stringify(mergedFromServer)
+          );
+        } catch {
+          // Ignore
+        }
+        return mergedFromServer;
+      }
     }
   } catch {
     // Offline fallback uses localStorage
@@ -160,12 +281,13 @@ export async function clearAllGroupReports(): Promise<void> {
 }
 
 /**
- * Generates 6 realistic student group records for classroom demonstration / testing
+ * Generates 5 realistic student group records for classroom demonstration / testing
  */
 export async function seedDemoGroupReports(): Promise<GroupLabRecord[]> {
   const demoGroups: GroupLabRecord[] = [
     {
       groupId: '1',
+      memberNames: '张明、李华、王芳、赵雷',
       lastUpdated: '10:15:22',
       submittedAt: '10:15:22',
       isExportedReport: true,
@@ -210,6 +332,7 @@ export async function seedDemoGroupReports(): Promise<GroupLabRecord[]> {
     },
     {
       groupId: '2',
+      memberNames: '陈晨、刘洋、周敏、吴昊',
       lastUpdated: '10:16:05',
       submittedAt: '10:16:05',
       isExportedReport: true,
@@ -248,6 +371,7 @@ export async function seedDemoGroupReports(): Promise<GroupLabRecord[]> {
     },
     {
       groupId: '3',
+      memberNames: '郑凯、孙悦、马超、胡静',
       lastUpdated: '10:16:48',
       submittedAt: '10:16:48',
       isExportedReport: true,
@@ -286,6 +410,7 @@ export async function seedDemoGroupReports(): Promise<GroupLabRecord[]> {
     },
     {
       groupId: '4',
+      memberNames: '林夕、何宇、高洁、宋浩',
       lastUpdated: '10:17:19',
       submittedAt: '10:17:19',
       isExportedReport: true,
@@ -320,6 +445,51 @@ export async function seedDemoGroupReports(): Promise<GroupLabRecord[]> {
         sharingConceptInput: '共享性',
         selectedPledges: [PLEDGE_ITEMS[0], PLEDGE_ITEMS[2], PLEDGE_ITEMS[3]],
         groupSlogan: '把握信息时效脉搏，做理性负责的数字公民！',
+      },
+    },
+    {
+      groupId: '5',
+      memberNames: '徐朗、邓欣、韩冬、曹琳',
+      lastUpdated: '10:17:50',
+      submittedAt: '10:17:50',
+      isExportedReport: true,
+      task1: {
+        selectedAudiences: ['high1', 'grade9', 'agency'],
+        timeNodeIndex: 4,
+        equalValueChoice: 'no',
+        dependsOnInput: '受众自身的需求',
+        timeTrendInput: '随时间推移衰减',
+      },
+      task2: {
+        activePresetId: 'weather',
+        customTextA: '',
+        customTextB: '',
+        isDissected: true,
+        selectedFlags: [
+          'flag_emotion',
+          'flag_data',
+          'flag_source',
+          'flag_forward',
+          'flag_profit',
+        ],
+        verdictChoice: 'fake',
+        causePurposeInput: '吸引点击与商业带货',
+        causeProcessInput: '夸张词汇渲染、违背气象极值',
+        characteristicInput: '真伪性',
+        actionInput: '核查权威气象部门数据，拒绝情绪化转发',
+      },
+      task3: {
+        caseMatches: {
+          case1: '载体依附性',
+          case2: '共享性',
+          case3: '时效性',
+          case4: '价值相对性',
+          case5: '真伪性',
+        },
+        carrierConceptInput: '载体依附性',
+        sharingConceptInput: '共享性',
+        selectedPledges: [...PLEDGE_ITEMS],
+        groupSlogan: '多维求证破迷雾，智辨真伪筑防线！',
       },
     },
   ];

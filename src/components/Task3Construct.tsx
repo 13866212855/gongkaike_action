@@ -1,15 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Layers,
   CheckCircle2,
   XCircle,
   Award,
-  Eye,
-  EyeOff,
   Sparkles,
   FileSpreadsheet,
   HelpCircle,
-  FileText,
+  Lock,
 } from 'lucide-react';
 import { Task3Data } from '../types/lab';
 import {
@@ -22,16 +20,15 @@ interface Task3ConstructProps {
   data: Task3Data;
   onChange: (updater: (prev: Task3Data) => Task3Data) => void;
   onOpenReport: () => void;
-  onExportWord: () => void;
+  answerUnlocked?: boolean;
 }
 
 export const Task3Construct: React.FC<Task3ConstructProps> = ({
   data,
   onChange,
   onOpenReport,
-  onExportWord,
+  answerUnlocked = false,
 }) => {
-  const [showAnswerKey, setShowAnswerKey] = useState(false);
 
   const handleSelectFeature = (caseId: string, featureKey: string) => {
     onChange((prev) => ({
@@ -84,25 +81,13 @@ export const Task3Construct: React.FC<Task3ConstructProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-lg border border-slate-200">
-              <span className="text-sm font-semibold text-slate-700">
-                校园情境辨析正确率：
-              </span>
-              <span className="text-xl font-mono font-bold text-cyan-700 tabular-nums">
-                {correctMatchCount} / {CAMPUS_CASES.length}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={onExportWord}
-              className="px-3.5 py-2 rounded-lg border border-cyan-600 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 text-sm font-bold transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              title="将任务三单独导出为可打印的 Word 纸质实验单"
-            >
-              <FileText className="w-4 h-4 text-cyan-700" />
-              <span>导出【任务三】Word</span>
-            </button>
+          <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-lg border border-slate-200">
+            <span className="text-sm font-semibold text-slate-700">
+              校园情境辨析正确率：
+            </span>
+            <span className="text-xl font-mono font-bold text-cyan-700 tabular-nums">
+              {correctMatchCount} / {CAMPUS_CASES.length}
+            </span>
           </div>
         </div>
 
@@ -425,25 +410,19 @@ export const Task3Construct: React.FC<Task3ConstructProps> = ({
           </div>
         </div>
 
-        {/* 底部操作栏：查看参考答案 + 生成最终报告 */}
+        {/* 底部操作栏：教师解锁参考答案状态 + 提交生成本组探究报告 */}
         <div className="mt-6 pt-5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => setShowAnswerKey((s) => !s)}
-            className="px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            {showAnswerKey ? (
-              <>
-                <EyeOff className="w-4 h-4 text-slate-500" />
-                <span>隐藏课堂总结参考</span>
-              </>
-            ) : (
-              <>
-                <Eye className="w-4 h-4 text-cyan-700" />
-                <span>查看参考答案（教师点评用）</span>
-              </>
-            )}
-          </button>
+          {answerUnlocked ? (
+            <span className="text-sm font-bold text-cyan-800 flex items-center gap-1.5 bg-cyan-50 px-3.5 py-2 rounded-lg border border-cyan-200">
+              <Sparkles className="w-4 h-4 text-cyan-600" />
+              <span>教师机已公布本任务参考结论（请对照下方解析自查）</span>
+            </span>
+          ) : (
+            <span className="text-xs font-mono text-slate-500 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-slate-400" />
+              <span>课堂探究进行中 · 教师讲评时将向全班同步解锁参考结论</span>
+            </span>
+          )}
 
           <button
             type="button"
@@ -452,15 +431,15 @@ export const Task3Construct: React.FC<Task3ConstructProps> = ({
           >
             <Award className="w-5 h-5" />
             <FileSpreadsheet className="w-5 h-5" />
-            <span>完成全部探究 · 导出本组探究报告</span>
+            <span>提交至教师机并生成本组探究报告</span>
           </button>
         </div>
 
-        {showAnswerKey && (
+        {answerUnlocked && (
           <div className="mt-4 p-4 rounded-xl bg-cyan-950 text-white border border-cyan-800">
             <div className="flex items-center gap-2 text-cyan-300 text-xs font-mono mb-1.5">
               <Sparkles className="w-4 h-4" />
-              <span>课堂总结参考答案（《1.3 信息及其特征》全景梳理）</span>
+              <span>课堂总结标准参考答案（《1.3 信息及其特征》全景梳理）</span>
             </div>
             <p className="text-base leading-relaxed">
               1. 校园五情境匹配：案例01 → <strong className="text-cyan-300">载体依附性</strong>；案例02 → <strong className="text-cyan-300">共享性</strong>；案例03 → <strong className="text-cyan-300">时效性</strong>；案例04 → <strong className="text-cyan-300">价值相对性</strong>；案例05 → <strong className="text-cyan-300">真伪性</strong>。

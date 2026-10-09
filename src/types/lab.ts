@@ -33,12 +33,26 @@ export interface Task3Data {
 
 export interface GroupLabRecord {
   groupId: string;
+  studentName?: string;
+  clientId?: string;
+  membersMap?: Record<string, string>;
+  memberNames?: string;
+  currentTask?: TaskId;
   task1: Task1Data;
   task2: Task2Data;
   task3: Task3Data;
   lastUpdated: string;
   submittedAt?: string;
   isExportedReport?: boolean;
+}
+
+export interface ClassroomConfig {
+  groupCount: number;
+  unlockAnswerTask1: boolean;
+  unlockAnswerTask2: boolean;
+  unlockAnswerTask3: boolean;
+  teacherBroadcast: string;
+  lanUrls?: string[];
 }
 
 export interface TimeNodeInfo {
